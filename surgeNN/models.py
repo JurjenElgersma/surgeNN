@@ -14,37 +14,44 @@ from sklearn.decomposition import PCA
 import statsmodels.api as sm
 import numpy as np
 import xarray as xr
+from keras.layers import Input
+import keras_tuner
+import keras
+from keras import regularizers
+from keras import layers
 
 # Conv2d
-def build_conv_layers(x):
+def build_CNN_model(n_conv, n_dense, n_kernels, n_neurons, predictors, predictor_variables, model_name, dropout_rate, lr, loss_function,l2=0.01):
     
-    x = Conv2D(32, (3,3), padding='same',activation='relu')(x)
-    x = BatchNormalization()(x)
-    x = MaxPooling2D(2)(x)
-    x = SpatialDropout2D(.1)(x)
-    x = Conv2D(64, (3,3), padding='same',activation='relu')(x)
-    x = BatchNormalization()(x)
-    x = MaxPooling2D(2)(x)
-    x = SpatialDropout2D(.1)(x)
-    x = Flatten()(x)
-    x = BatchNormalization()(x)
+    input_shape = (len(predictors.lat_around_tg), len(predictors.lon_around_tg), 1)
     
-    return x
+    inputs = []
+    convoluted_vars = []
+    for var in predictor_variables: #for each predictor input variable, apply convolution:
+        cnn_input = keras.Input(shape=input_shape)
+        
+        for l in np.arange(n_conv):
+            x = layers.Conv2D(n_kernels, kernel_size=(3, 3), padding='same', activation='relu')(cnn_input)        
+            x = layers.BatchNormalization()(x)
+            x = layers.MaxPooling2D(pool_size=(2, 2), padding="same")(x)
+        
+        x = SpatialDropout2D(dropout_rate)(x)
+        x = layers.Flatten()(x)
+        
+        convoluted_vars.append(x)
+        inputs.append(cnn_input)
+        
+    concatenated = layers.concatenate(convoluted_vars)
 
-def build_cnn(inputs):
+    #dense layers:
+    for l in np.arange(n_dense):
+        x = layers.Dense(n_neurons,activation='relu',activity_regularizer=regularizers.l2(l2))(concatenated)
+        x = layers.Dropout((dropout_rate))(x)
+       
+    output = layers.Dense(1,activation='linear')(x)
     
-    layers = [build_conv_layers(i) for i in inputs]
-    concat_layers = Concatenate()(layers)
-    
-    #densely connected layers:
-    dense = Dense(64,activation='relu',activity_regularizer=regularizers.l2(0.01))(concat_layers)
-    dropped = Dropout((0.1))(dense)
-    dense = Dense(64,activation='relu',activity_regularizer=regularizers.l2(0.01))(concat_layers)
-    dropped = Dropout((0.1))(dense)
-    output = Dense(1,activation='linear')(dropped)
-    
-    model = Model(inputs=inputs, outputs=output)
-
+    model = keras.Model(inputs=inputs, outputs=output,name=model_name)    
+    model.compile(optimizer=keras.optimizers.Adam(learning_rate=lr),loss=loss_function,metrics=['accuracy']) #compile
     return model
 
 # Multi-linear regression model (Tadesse et al., 2020; Hermans et al., 2023 in review)
